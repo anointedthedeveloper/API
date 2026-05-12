@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepSeek API Server Setup</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 100%);
+            color: #e0e0e0;
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding: 30px 0;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            color: transparent;
+            margin-bottom: 10px;
+            font-weight: 700;
+        }
+
+        .header p {
+            color: #9ca3af;
+            font-size: 1.1rem;
+        }
+
+        .status-card {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 25px;
+            margin-bottom: 30px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 15px;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #ef4444;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.authenticated {
+            background: #10b981;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .tab {
+            padding: 12px 24px;
+            background: transparent;
+            border: none;
+            color: #9ca3af;
+            cursor: pointer;
+            font-size: 1rem;
+            border-bottom: 2px solid transparent;
+            transition: all 0.3s ease;
+        }
+
+        .tab:hover {
+            color: #e0e0e0;
+        }
+
+        .tab.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #e0e0e0;
+            font-weight: 500;
+        }
+
+        .form-group input,
+        .form-group textarea {
+            width: 100%;
+            padding: 12px 16px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            color: #e0e0e0;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+        }
+
+        .form-group input:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .form-group textarea {
+            min-height: 120px;
+            resize: vertical;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.9rem;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-right: 10px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .alert {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border-left: 4px solid;
+        }
+
+        .alert-success {
+            background: rgba(16, 185, 129, 0.1);
+            border-color: #10b981;
+            color: #10b981;
+        }
+
+        .alert-error {
+            background: rgba(239, 68, 68, 0.1);
+            border-color: #ef4444;
+            color: #ef4444;
+        }
+
+        .alert-info {
+            background: rgba(59, 130, 246, 0.1);
+            border-color: #3b82f6;
+            color: #3b82f6;
+        }
+
+        .info-section {
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 30px;
+        }
+
+        .info-section h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+        }
+
+        .code-block {
+            background: #1a1a2e;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 10px 0;
+            overflow-x: auto;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.9rem;
+        }
+
+        .url-display {
+            background: rgba(102, 126, 234, 0.1);
+            border: 1px solid rgba(102, 126, 234, 0.3);
+            border-radius: 8px;
+            padding: 12px 16px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.9rem;
+            margin: 10px 0;
+            word-break: break-all;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: #667eea;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 15px;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+            
+            .tabs {
+                flex-direction: column;
+            }
+            
+            .tab {
+                text-align: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 DeepSeek API Server</h1>
+            <p>Configure your DeepSeek authentication to enable the API</p>
+        </div>
+
+        <div class="status-card">
+            <div class="status-indicator">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="statusText">Checking status...</span>
+            </div>
+            <div id="statusDetails"></div>
+            <button class="btn btn-secondary" onclick="checkStatus()">🔄 Refresh Status</button>
+        </div>
+
+        <div id="alerts"></div>
+
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('email')">📧 Email Login</button>
+            <button class="tab" onclick="switchTab('google')">🔵 Google Sign-in</button>
+            <button class="tab" onclick="switchTab('token')">🔑 Manual Token</button>
+        </div>
+
+        <div id="emailTab" class="tab-content active">
+            <div class="form-group">
+                <label for="email">Email Address</label>
+                <input type="email" id="email" placeholder="your@email.com">
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" placeholder="Your DeepSeek password">
+            </div>
+            <button class="btn" onclick="loginWithEmail()">Login with Email</button>
+        </div>
+
+        <div id="googleTab" class="tab-content">
+            <div class="form-group">
+                <label for="googleIdToken">Google ID Token</label>
+                <textarea id="googleIdToken" placeholder="Paste your Google ID token here..."></textarea>
+            </div>
+            <div class="alert alert-info">
+                <strong>How to get Google ID token:</strong><br>
+                1. Click the button below to sign in with Google<br>
+                2. Complete the Google authentication flow<br>
+                3. The ID token will be automatically extracted and used<br>
+                4. Alternatively, you can manually get the token from browser DevTools
+            </div>
+            <button class="btn" onclick="initiateGoogleSignIn()">🔵 Sign in with Google</button>
+            <button class="btn btn-secondary" onclick="loginWithGoogleToken()">Use Manual Token</button>
+        </div>
+
+        <div id="tokenTab" class="tab-content">
+            <div class="form-group">
+                <label for="token">Access Token</label>
+                <textarea id="token" placeholder="Paste your access token here..."></textarea>
+            </div>
+            <div class="alert alert-info">
+                <strong>How to get your token:</strong><br>
+                1. Open DeepSeek in your browser<br>
+                2. Login to your account<br>
+                3. Open Developer Tools (F12)<br>
+                4. Go to Application → Local Storage<br>
+                5. Copy the 'access_token' value
+            </div>
+            <button class="btn" onclick="loginWithToken()">Login with Token</button>
+        </div>
+
+        <div class="info-section">
+            <h3>📡 API Information</h3>
+            <p><strong>Base URL:</strong></p>
+            <div class="url-display" id="baseUrl">Loading...</div>
+            
+            <p><strong>Example cURL Command:</strong></p>
+            <div class="code-block">
+curl -X POST <span id="curlUrl">http://localhost:8080/v1/chat/completions</span> \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      {"role": "user", "content": "Hello, how are you?"}
+    ],
+    "model": "deepseek-chat",
+    "temperature": 0.7
+  }'
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentTab = 'email';
+        let statusCheckInterval;
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            checkStatus();
+            updateApiInfo();
+            statusCheckInterval = setInterval(checkStatus, 30000); // Auto-refresh every 30 seconds
+        });
+
+        function switchTab(tab) {
+            currentTab = tab;
+            
+            // Update tab buttons
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            // Update tab content
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            document.getElementById(tab + 'Tab').classList.add('active');
+        }
+
+        async function checkStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+                
+                updateStatusDisplay(data);
+            } catch (error) {
+                showAlert('Failed to check status: ' + error.message, 'error');
+                updateStatusDisplay({ authenticated: false, error: 'Connection error' });
+            }
+        }
+
+        function updateStatusDisplay(data) {
+            const statusDot = document.getElementById('statusDot');
+            const statusText = document.getElementById('statusText');
+            const statusDetails = document.getElementById('statusDetails');
+            
+            if (data.authenticated) {
+                statusDot.classList.add('authenticated');
+                statusText.textContent = `✅ Authenticated as ${data.email}`;
+                
+                let details = '';
+                if (data.token_expires_at) {
+                    const expiry = new Date(data.token_expires_at);
+                    details += `Token expires: ${expiry.toLocaleString()}<br>`;
+                }
+                if (data.last_login) {
+                    const login = new Date(data.last_login);
+                    details += `Last login: ${login.toLocaleString()}`;
+                }
+                statusDetails.innerHTML = details;
+            } else {
+                statusDot.classList.remove('authenticated');
+                statusText.textContent = '❌ Not authenticated';
+                statusDetails.innerHTML = data.error ? `Error: ${data.error}` : 'Please login to enable the API';
+            }
+        }
+
+        async function loginWithEmail() {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            
+            if (!email || !password) {
+                showAlert('Please enter both email and password', 'error');
+                return;
+            }
+            
+            const button = event.target;
+            button.disabled = true;
+            button.innerHTML = '<span class="loading"></span> Logging in...';
+            
+            try {
+                const response = await fetch('/api/login/email', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showAlert('✅ Login successful! API is now ready.', 'success');
+                    await checkStatus();
+                    // Clear form
+                    document.getElementById('email').value = '';
+                    document.getElementById('password').value = '';
+                } else {
+                    showAlert('❌ Login failed: ' + data.error, 'error');
+                }
+            } catch (error) {
+                showAlert('Login error: ' + error.message, 'error');
+            } finally {
+                button.disabled = false;
+                button.innerHTML = 'Login with Email';
+            }
+        }
+
+        async function loginWithToken() {
+            const token = document.getElementById('token').value.trim();
+            
+            if (!token) {
+                showAlert('Please enter an access token', 'error');
+                return;
+            }
+            
+            const button = event.target;
+            button.disabled = true;
+            button.innerHTML = '<span class="loading"></span> Validating token...';
+            
+            try {
+                const response = await fetch('/api/login/token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showAlert('✅ Token validated! API is now ready.', 'success');
+                    await checkStatus();
+                    // Clear form
+                    document.getElementById('token').value = '';
+                } else {
+                    showAlert('❌ Token validation failed: ' + data.error, 'error');
+                }
+            } catch (error) {
+                showAlert('Token validation error: ' + error.message, 'error');
+            } finally {
+                button.disabled = false;
+                button.innerHTML = 'Login with Token';
+            }
+        }
+
+        function initiateGoogleSignIn() {
+            // Open DeepSeek Google OAuth in popup
+            const width = 500;
+            const height = 600;
+            const left = (screen.width - width) / 2;
+            const top = (screen.height - height) / 2;
+            
+            const popup = window.open(
+                'https://chat.deepseek.com/oauth/google',
+                'google-signin',
+                `width=${width},height=${height},left=${left},top=${top},scrollbars=yes,resizable=yes`
+            );
+            
+            // Listen for messages from popup
+            const messageHandler = (event) => {
+                if (event.origin !== window.location.origin) return;
+                
+                if (event.data.type === 'GOOGLE_SIGNIN_SUCCESS') {
+                    const idToken = event.data.id_token;
+                    document.getElementById('googleIdToken').value = idToken;
+                    popup.close();
+                    window.removeEventListener('message', messageHandler);
+                    
+                    // Automatically login with the received token
+                    loginWithGoogleToken();
+                }
+            };
+            
+            window.addEventListener('message', messageHandler);
+            
+            // Fallback: check if popup was closed manually
+            const checkClosed = setInterval(() => {
+                if (popup.closed) {
+                    clearInterval(checkClosed);
+                    window.removeEventListener('message', messageHandler);
+                }
+            }, 1000);
+        }
+
+        async function loginWithGoogleToken() {
+            const idToken = document.getElementById('googleIdToken').value.trim();
+            
+            if (!idToken) {
+                showAlert('Please enter a Google ID token', 'error');
+                return;
+            }
+            
+            const button = event.target;
+            button.disabled = true;
+            button.innerHTML = '<span class="loading"></span> Authenticating with Google...';
+            
+            try {
+                const response = await fetch('/api/login/google', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id_token: idToken })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showAlert('✅ Google authentication successful! API is now ready.', 'success');
+                    await checkStatus();
+                    // Clear form
+                    document.getElementById('googleIdToken').value = '';
+                } else {
+                    showAlert('❌ Google authentication failed: ' + data.error, 'error');
+                }
+            } catch (error) {
+                showAlert('Google authentication error: ' + error.message, 'error');
+            } finally {
+                button.disabled = false;
+                button.innerHTML = 'Use Manual Token';
+            }
+        }
+
+        function showAlert(message, type) {
+            const alertsContainer = document.getElementById('alerts');
+            const alert = document.createElement('div');
+            alert.className = `alert alert-${type}`;
+            alert.textContent = message;
+            
+            alertsContainer.innerHTML = '';
+            alertsContainer.appendChild(alert);
+            
+            // Auto-dismiss after 5 seconds
+            setTimeout(() => {
+                if (alert.parentNode) {
+                    alert.parentNode.removeChild(alert);
+                }
+            }, 5000);
+        }
+
+        function updateApiInfo() {
+            const baseUrl = window.location.origin;
+            document.getElementById('baseUrl').textContent = baseUrl;
+            document.getElementById('curlUrl').textContent = baseUrl + '/v1/chat/completions';
+        }
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', function() {
+            if (statusCheckInterval) {
+                clearInterval(statusCheckInterval);
+            }
+        });
+    </script>
+</body>
+</html>
