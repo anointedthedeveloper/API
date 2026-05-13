@@ -290,9 +290,9 @@
         <div id="alerts"></div>
 
         <div class="tabs">
-            <button class="tab active" onclick="switchTab('email')">📧 Email Login</button>
-            <button class="tab" onclick="switchTab('google')">🔵 Google Sign-in</button>
-            <button class="tab" onclick="switchTab('token')">🔑 Manual Token</button>
+            <button class="tab active" onclick="switchTab(event, 'email')">📧 Email Login</button>
+            <button class="tab" onclick="switchTab(event, 'google')">🔵 Google Sign-in</button>
+            <button class="tab" onclick="switchTab(event, 'token')">🔑 Manual Token</button>
         </div>
 
         <div id="emailTab" class="tab-content active">
@@ -304,7 +304,7 @@
                 <label for="password">Password</label>
                 <input type="password" id="password" placeholder="Your DeepSeek password">
             </div>
-            <button class="btn" onclick="loginWithEmail()">Login with Email</button>
+            <button id="emailLoginButton" class="btn" onclick="loginWithEmail(event)">Login with Email</button>
         </div>
 
         <div id="googleTab" class="tab-content">
@@ -320,7 +320,7 @@
                 4. Alternatively, you can manually get the token from browser DevTools
             </div>
             <button class="btn" onclick="initiateGoogleSignIn()">🔵 Sign in with Google</button>
-            <button class="btn btn-secondary" onclick="loginWithGoogleToken()">Use Manual Token</button>
+            <button id="googleLoginButton" class="btn btn-secondary" onclick="loginWithGoogleToken(event)">Use Manual Token</button>
         </div>
 
         <div id="tokenTab" class="tab-content">
@@ -330,13 +330,17 @@
             </div>
             <div class="alert alert-info">
                 <strong>How to get your token:</strong><br>
-                1. Open DeepSeek in your browser<br>
+                1. Open DeepSeek in your browser (chat.deepseek.com)<br>
                 2. Login to your account<br>
                 3. Open Developer Tools (F12)<br>
-                4. Go to Application → Local Storage<br>
-                5. Copy the 'access_token' value
+                4. Go to Application → Local Storage → https://chat.deepseek.com<br>
+                5. Find the 'userToken' entry<br>
+                6. <strong>IMPORTANT:</strong> Click to expand it - you'll see a value field. COPY ONLY THE VALUE string.<br>
+                <br>
+                Example: The token looks like: "CZAQ71Ri5E2j8kxvpE3chb6q8bcySt7MygB8L2n1LLIjKYrkcFbLbvC41ZGcqrrj"<br>
+                <strong>DO NOT paste the whole object - just the value string!</strong>
             </div>
-            <button class="btn" onclick="loginWithToken()">Login with Token</button>
+            <button id="tokenLoginButton" class="btn" onclick="loginWithToken(event)">Login with Token</button>
         </div>
 
         <div class="info-section">
@@ -370,12 +374,15 @@ curl -X POST <span id="curlUrl">http://localhost:8080/v1/chat/completions</span>
             statusCheckInterval = setInterval(checkStatus, 30000); // Auto-refresh every 30 seconds
         });
 
-        function switchTab(tab) {
+        function switchTab(event, tab) {
             currentTab = tab;
             
             // Update tab buttons
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            event.target.classList.add('active');
+            const targetButton = event?.currentTarget || event?.target;
+            if (targetButton && targetButton.classList) {
+                targetButton.classList.add('active');
+            }
             
             // Update tab content
             document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
@@ -420,18 +427,27 @@ curl -X POST <span id="curlUrl">http://localhost:8080/v1/chat/completions</span>
             }
         }
 
-        async function loginWithEmail() {
+        function getButtonFromEvent(event, fallbackSelector) {
+            if (event) {
+                return event.currentTarget || event.target;
+            }
+            return document.querySelector(fallbackSelector);
+        }
+
+        async function loginWithEmail(event) {
             const email = document.getElementById('email').value;
             const password = document.getElementById('password').value;
+            const button = getButtonFromEvent(event, '#emailLoginButton');
             
             if (!email || !password) {
                 showAlert('Please enter both email and password', 'error');
                 return;
             }
             
-            const button = event.target;
-            button.disabled = true;
-            button.innerHTML = '<span class="loading"></span> Logging in...';
+            if (button) {
+                button.disabled = true;
+                button.innerHTML = '<span class="loading"></span> Logging in...';
+            }
             
             try {
                 const response = await fetch('/api/login/email', {
@@ -454,12 +470,14 @@ curl -X POST <span id="curlUrl">http://localhost:8080/v1/chat/completions</span>
             } catch (error) {
                 showAlert('Login error: ' + error.message, 'error');
             } finally {
-                button.disabled = false;
-                button.innerHTML = 'Login with Email';
+                if (button) {
+                    button.disabled = false;
+                    button.innerHTML = 'Login with Email';
+                }
             }
         }
 
-        async function loginWithToken() {
+        async function loginWithToken(event) {
             const token = document.getElementById('token').value.trim();
             
             if (!token) {
@@ -467,9 +485,11 @@ curl -X POST <span id="curlUrl">http://localhost:8080/v1/chat/completions</span>
                 return;
             }
             
-            const button = event.target;
-            button.disabled = true;
-            button.innerHTML = '<span class="loading"></span> Validating token...';
+            const button = getButtonFromEvent(event, '#tokenLoginButton');
+            if (button) {
+                button.disabled = true;
+                button.innerHTML = '<span class="loading"></span> Validating token...';
+            }
             
             try {
                 const response = await fetch('/api/login/token', {
@@ -491,8 +511,10 @@ curl -X POST <span id="curlUrl">http://localhost:8080/v1/chat/completions</span>
             } catch (error) {
                 showAlert('Token validation error: ' + error.message, 'error');
             } finally {
-                button.disabled = false;
-                button.innerHTML = 'Login with Token';
+                if (button) {
+                    button.disabled = false;
+                    button.innerHTML = 'Login with Token';
+                }
             }
         }
 
@@ -511,10 +533,14 @@ curl -X POST <span id="curlUrl">http://localhost:8080/v1/chat/completions</span>
             
             // Listen for messages from popup
             const messageHandler = (event) => {
-                if (event.origin !== window.location.origin) return;
+                if (event.origin !== window.location.origin && event.origin !== 'https://chat.deepseek.com') return;
                 
-                if (event.data.type === 'GOOGLE_SIGNIN_SUCCESS') {
-                    const idToken = event.data.id_token;
+                if (event.data && (event.data.type === 'GOOGLE_SIGNIN_SUCCESS' || event.data.type === 'google-signin-success')) {
+                    const idToken = event.data.id_token || event.data.idToken || event.data.token;
+                    if (!idToken) {
+                        showAlert('Google sign-in succeeded but no ID token was received.', 'error');
+                        return;
+                    }
                     document.getElementById('googleIdToken').value = idToken;
                     popup.close();
                     window.removeEventListener('message', messageHandler);
@@ -535,7 +561,7 @@ curl -X POST <span id="curlUrl">http://localhost:8080/v1/chat/completions</span>
             }, 1000);
         }
 
-        async function loginWithGoogleToken() {
+        async function loginWithGoogleToken(event) {
             const idToken = document.getElementById('googleIdToken').value.trim();
             
             if (!idToken) {
@@ -543,9 +569,11 @@ curl -X POST <span id="curlUrl">http://localhost:8080/v1/chat/completions</span>
                 return;
             }
             
-            const button = event.target;
-            button.disabled = true;
-            button.innerHTML = '<span class="loading"></span> Authenticating with Google...';
+            const button = getButtonFromEvent(event, '#googleLoginButton');
+            if (button) {
+                button.disabled = true;
+                button.innerHTML = '<span class="loading"></span> Authenticating with Google...';
+            }
             
             try {
                 const response = await fetch('/api/login/google', {
