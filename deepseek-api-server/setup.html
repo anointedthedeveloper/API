@@ -329,16 +329,15 @@
                 <textarea id="token" placeholder="Paste your access token here..."></textarea>
             </div>
             <div class="alert alert-info">
-                <strong>How to get your token:</strong><br>
-                1. Open DeepSeek in your browser (chat.deepseek.com)<br>
-                2. Login to your account<br>
-                3. Open Developer Tools (F12)<br>
-                4. Go to Application → Local Storage → https://chat.deepseek.com<br>
-                5. Find the 'userToken' entry<br>
-                6. <strong>IMPORTANT:</strong> Click to expand it - you'll see a value field. COPY ONLY THE VALUE string.<br>
+                <strong>How to get your token from chat.deepseek.com:</strong><br>
+                1. Open <a href="https://chat.deepseek.com" target="_blank" style="color:#667eea">chat.deepseek.com</a> and log in<br>
+                2. Press <strong>F12</strong> to open Developer Tools<br>
+                3. Go to <strong>Application</strong> tab → <strong>Local Storage</strong> → <code>https://chat.deepseek.com</code><br>
+                4. Find the key called <strong>userToken</strong><br>
+                5. Click on it — you'll see something like <code>{"value":"abc123...","__version":"0"}</code><br>
+                6. Copy <strong>only the value string</strong> inside the quotes after <code>"value":</code><br>
                 <br>
-                Example: The token looks like: "CZAQ71Ri5E2j8kxvpE3chb6q8bcySt7MygB8L2n1LLIjKYrkcFbLbvC41ZGcqrrj"<br>
-                <strong>DO NOT paste the whole object - just the value string!</strong>
+                Example token: <code>CZAQ71Ri5E2j8kxvpE3chb6q8bcySt7MygB8L2n1...</code>
             </div>
             <button id="tokenLoginButton" class="btn" onclick="loginWithToken(event)">Login with Token</button>
         </div>

@@ -186,53 +186,46 @@ async def login_with_google(request: GoogleLoginRequest):
 @app.post("/v1/chat/completions")
 async def chat_completions(request: ChatCompletionRequest):
     """OpenAI-compatible chat completions endpoint."""
-    try:
-        if request.stream:
-            response_generator = await manager.chat_completion(
-                messages=request.messages,
-                stream=True,
-                temperature=request.temperature,
-                model=request.model
-            )
-            
-            async def stream_response():
-                async for chunk in response_generator:
-                    yield chunk
-            
-            return StreamingResponse(
-                stream_response(),
-                media_type="text/plain",
-                headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
-            )
-        else:
-            response = await manager.chat_completion(
-                messages=request.messages,
-                stream=False,
-                temperature=request.temperature,
-                model=request.model
-            )
-            
-            if "error" in response:
-                raise HTTPException(status_code=400, detail=response["error"])
-            
-            # Convert to OpenAI format
-            return ChatCompletionResponse(
-                id=f"chatcmpl-{int(time.time())}",
-                created=int(time.time()),
-                model=request.model,
-                choices=[{
-                    "index": 0,
-                    "message": {
-                        "role": "assistant",
-                        "content": response.get("choices", [{}])[0].get("message", {}).get("content", "")
-                    },
-                    "finish_reason": response.get("choices", [{}])[0].get("finish_reason", "stop")
-                }],
-                usage=response.get("usage")
-            )
-            
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    if request.stream:
+        response_generator = await manager.chat_completion(
+            messages=request.messages,
+            stream=True,
+            temperature=request.temperature,
+            model=request.model
+        )
+        async def stream_response():
+            async for chunk in response_generator:
+                yield chunk
+        return StreamingResponse(
+            stream_response(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
+        )
+
+    response = await manager.chat_completion(
+        messages=request.messages,
+        stream=False,
+        temperature=request.temperature,
+        model=request.model
+    )
+
+    if "error" in response:
+        raise HTTPException(status_code=400, detail=response["error"])
+
+    return ChatCompletionResponse(
+        id=f"chatcmpl-{int(time.time())}",
+        created=int(time.time()),
+        model=request.model,
+        choices=[{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": response.get("choices", [{}])[0].get("message", {}).get("content", "")
+            },
+            "finish_reason": response.get("choices", [{}])[0].get("finish_reason", "stop")
+        }],
+        usage=response.get("usage")
+    )
 
 
 @app.get("/health")
