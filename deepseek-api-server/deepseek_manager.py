@@ -1,6 +1,7 @@
 import json
 import sqlite3
 import time
+import hashlib
 import logging
 import requests
 from datetime import datetime, timedelta
@@ -117,31 +118,86 @@ class DeepSeekManager:
             conn.execute("DELETE FROM credentials WHERE id = 1")
             conn.commit()
 
+    def _solve_pow(self, target_path: str) -> Optional[str]:
+        """Fetch and solve DeepSeek Proof-of-Work challenge."""
+        try:
+            resp = self.session.post(
+                f"{self.api_url}/chat/create_pow_challenge",
+                json={"target_path": target_path},
+                timeout=15,
+            )
+            data = resp.json()
+            if data.get("code") != 0:
+                logger.warning("POW challenge fetch failed: %s", data.get("msg"))
+                return None
+
+            biz        = data["data"]["biz_data"]["challenge"]
+            algorithm  = biz["algorithm"]
+            challenge  = biz["challenge"]
+            salt       = biz["salt"]
+            difficulty = biz["difficulty"]
+            signature  = biz["signature"]
+            expire_at  = biz["expire_at"]
+
+            logger.info("Solving POW difficulty=%d", difficulty)
+
+            # Algorithm: sha3_256(challenge + salt + "_" + expire_at + "_" + nonce)
+            # Condition:  struct.unpack('<I', hash[:4])[0] < (2^32 / difficulty)
+            import struct
+            prefix = f"{salt}_{expire_at}_"
+            threshold = (2**32) // difficulty
+            answer = 0
+            while True:
+                h = hashlib.sha3_256((challenge + prefix + str(answer)).encode()).digest()
+                if struct.unpack("<I", h[:4])[0] < threshold:
+                    break
+                answer += 1
+
+            logger.info("POW solved: answer=%d", answer)
+            result = json.dumps({
+                "algorithm": algorithm,
+                "challenge": challenge,
+                "salt": salt,
+                "answer": answer,
+                "signature": signature,
+                "target_path": target_path,
+            }, separators=(",", ":"))
+            import base64
+            return base64.b64encode(result.encode()).decode()
+        except Exception as e:
+            logger.error("POW solve error: %s", e)
+            return None
+
+    def _get_chat_headers(self, token: str) -> Dict[str, str]:
+        """Build full headers including POW for chat/completion."""
+        pow_response = self._solve_pow("/api/v0/chat/completion")
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "x-app-version": "2.0.0",
+            "x-client-locale": "en_US",
+            "x-client-platform": "web",
+            "x-client-timezone-offset": "3600",
+            "x-client-version": "2.0.0",
+            "Referer": "https://chat.deepseek.com/",
+            "Origin": "https://chat.deepseek.com",
+        }
+        if pow_response:
+            headers["x-ds-pow-response"] = pow_response
+        return headers
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM credentials WHERE id = 1")
+            conn.commit()
+
     async def login_with_manual_token(self, token_input) -> AuthStatus:
-        """Save the user token from chat.deepseek.com localStorage."""
         token = self._extract_token_string(token_input)
         if not token:
-            return AuthStatus(is_authenticated=False, error="Could not extract token. Please paste the token value.")
-
-        logger.info("Validating token (length: %d)", len(token))
-
-        # Validate by fetching the user profile
-        user_info = await self._get_user_info(token)
-        if not user_info:
-            return AuthStatus(is_authenticated=False, error="Invalid or expired token. Please get a fresh token from chat.deepseek.com")
-
-        email = (user_info.get("email")
-                 or user_info.get("nickname")
-                 or user_info.get("name")
-                 or user_info.get("username")
-                 or "deepseek_user")
-        logger.info("Token valid for user: %s", email)
-
-        self._store_credentials(email, token, expires_in=7 * 24 * 3600)
-
+            return AuthStatus(is_authenticated=False, error="Could not extract token.")
+        self._store_credentials("deepseek_user", token, expires_in=7 * 24 * 3600)
+        logger.info("Token stored (length: %d)", len(token))
         return AuthStatus(
             is_authenticated=True,
-            email=email,
+            email="deepseek_user",
             token_expires_at=self._get_current_time() + timedelta(days=7),
             last_login=self._get_current_time(),
         )
@@ -260,7 +316,10 @@ class DeepSeekManager:
             if data.get("code") != 0:
                 logger.warning("Session creation failed, using fallback session ID")
                 return "11522221-f172-40ab-ac7e-72c45682dd95"
-            session_id = data.get("data", {}).get("id") or data.get("id")
+            session_id = (data.get("data", {}).get("biz_data", {}).get("chat_session", {}).get("id")
+                          or data.get("data", {}).get("biz_data", {}).get("id")
+                          or data.get("data", {}).get("id")
+                          or data.get("id"))
             logger.info("Created chat session: %s", session_id)
             return session_id
         except Exception as e:
@@ -298,11 +357,12 @@ class DeepSeekManager:
                 "model": model,
                 "temperature": temperature,
                 "stream": stream,
+                "ref_file_ids": [],
             }
             if conversation:
                 payload["conversation"] = conversation
 
-            headers = {"Authorization": f"Bearer {token}"}
+            headers = self._get_chat_headers(token)
 
             if stream:
                 return self._stream_response(payload, headers)
