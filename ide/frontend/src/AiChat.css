@@ -492,3 +492,23 @@
     display: none;
   }
 }
+
+.continue-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  margin: 0 12px 6px;
+  padding: 6px 14px;
+  border: 1px solid #4a9eff;
+  border-radius: 14px;
+  background: transparent;
+  color: #4a9eff;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.15s;
+}
+
+.continue-btn:hover {
+  background: #1a3a5c;
+}

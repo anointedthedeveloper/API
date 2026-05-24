@@ -127,9 +127,12 @@ function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpen
   const [activeId, setActiveId] = useState(() => sessions[0]?.id);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [truncated, setTruncated] = useState(false);
   const abortRef = useRef(null);
   const endRef = useRef(null);
   const inputRef = useRef(null);
+  const propsRef = useRef({});
+  propsRef.current = { workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpenFile };
 
   const active = sessions.find((s) => s.id === activeId) || sessions[0];
   const messages = useMemo(() => active?.messages || [], [active]);
@@ -164,6 +167,7 @@ function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpen
   const runActions = useCallback(async (text) => {
     const actions = extractActions(text);
     if (!actions.length) return;
+    const { dirHandle, onWorkspaceRefresh, onOpenFile } = propsRef.current;
     if (!dirHandle) {
       push({ role: "assistant", content: "No folder open — cannot write files." });
       return;
@@ -193,7 +197,7 @@ function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpen
       }
     }
     push({ role: "assistant", content: results.join("\n") });
-  }, [dirHandle, onOpenFile, onWorkspaceRefresh, push]);
+  }, [push]);
 
   const stop = useCallback(() => {
     abortRef.current?.abort();
@@ -201,27 +205,35 @@ function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpen
     patchLast((m) => ({ ...m, pending: false, stopped: true }));
   }, [patchLast]);
 
-  const send = useCallback(async (e) => {
+  const continueGeneration = useCallback(() => {
+    setTruncated(false);
+    send(null, "continue");
+  }, [send]);
+
+  const send = useCallback(async (e, overrideText) => {
     e?.preventDefault();
-    const text = input.trim();
+    const text = overrideText || input.trim();
     if (!text) { if (loading) stop(); return; }
     if (loading) stop();
+
+    // Capture history BEFORE pushing new messages so we don't send duplicates
+    const history = messages
+      .filter((m) => m.content && !m.pending)
+      .slice(-8)
+      .map((m) => ({ role: m.role, content: m.content.slice(0, 600) }));
 
     push({ role: "user", content: text });
     push({ role: "assistant", content: "", pending: true });
     setInput("");
     setLoading(true);
+    setTruncated(false);
 
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     let full = "";
 
     try {
-      const history = messages.slice(-8).map((m) => ({
-        role: m.role,
-        content: m.content.slice(0, 600),
-      }));
-
+      const { fileTree } = propsRef.current;
       const treeStr = fileTree ? flattenTree(fileTree).join("\n") : "";
       const sysPrompt = buildSystemPrompt(workspaceName, treeStr);
 
@@ -233,7 +245,7 @@ function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpen
           model: "deepseek-chat",
           stream: true,
           messages: [
-            { role: "user", content: sysPrompt },
+            { role: "system", content: sysPrompt },
             ...history,
             { role: "user", content: text },
           ],
@@ -259,10 +271,14 @@ function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpen
           try {
             const chunk = JSON.parse(payload);
             const delta = chunk.choices?.[0]?.delta?.content || "";
+            const finishReason = chunk.choices?.[0]?.finish_reason;
             if (delta) {
               full += delta;
               const snapshot = full;
               patchLast((m) => ({ ...m, content: cleanText(snapshot) }));
+            }
+            if (finishReason === "length") {
+              setTruncated(true);
             }
           } catch {}
         }
@@ -284,7 +300,7 @@ function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpen
       abortRef.current = null;
       requestAnimationFrame(() => inputRef.current?.focus());
     }
-  }, [fileTree, input, loading, messages, patchLast, push, runActions, stop, workspaceName]);
+  }, [input, loading, messages, patchLast, push, runActions, stop, workspaceName]);
 
   const newChat = () => {
     const s = DEFAULT_SESSION();
@@ -313,7 +329,7 @@ function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpen
             <h3 className="chat-title">ANAI</h3>
             <p className="chat-subtitle">Owner: anointedthedeveloper</p>
             <div className="model-status">
-              <VscCircleFilled /> deepseek-chat via localhost:8080
+              <VscCircleFilled /> {workspaceName ? `Folder: ${workspaceName}` : "No folder open"}
             </div>
           </div>
           <button className="clear-btn" onClick={() => updateActive((s) => ({ ...s, messages: DEFAULT_SESSION().messages }))} title="Clear chat"><VscClearAll /></button>
@@ -337,6 +353,11 @@ function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpen
         </div>
 
         <form className="input-form" onSubmit={send}>
+          {truncated && !loading && (
+            <button type="button" className="continue-btn" onClick={continueGeneration}>
+              ↓ Continue
+            </button>
+          )}
           <input
             ref={inputRef}
             type="text"

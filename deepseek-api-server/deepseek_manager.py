@@ -10,7 +10,7 @@ from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 from pow_native import DeepSeekPOW
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
@@ -344,10 +344,23 @@ class DeepSeekManager:
             return self._error_stream(error_msg) if stream else error_msg
 
         try:
+            # Merge system messages into the first user message
+            merged = []
+            system_text = ""
+            for m in messages:
+                if m.get("role") == "system":
+                    system_text += m.get("content", "") + "\n\n"
+                else:
+                    merged.append(m)
+            if system_text and merged:
+                merged[0] = {"role": merged[0]["role"], "content": system_text.strip() + "\n\n" + merged[0].get("content", "")}
+            messages = merged or messages
+
             prompt = messages[-1].get("content", "") if messages else ""
             conversation = [
                 {"role": m.get("role", "user"), "content": m.get("content", "")}
                 for m in messages[:-1]
+                if m.get("role") in ("user", "assistant")
             ]
 
             payload = {
@@ -487,9 +500,10 @@ class DeepSeekManager:
                             delta_text = first
                     elif p == "response/fragments/-1/content" and o == "APPEND" and isinstance(v, str):
                         delta_text = v
-                    elif p == "response/status" and v == "FINISHED":
+                    elif p == "response/status" and v in ("FINISHED", "INCOMPLETE"):
+                        finish_reason = "stop" if v == "FINISHED" else "length"
                         finish = {"id": msg_id, "object": "chat.completion.chunk", "created": created,
-                                  "model": model, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
+                                  "model": model, "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}]}
                         yield f"data: {json.dumps(finish)}\n\n"
                         yield "data: [DONE]\n\n"
                         return

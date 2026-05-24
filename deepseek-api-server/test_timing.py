@@ -1,20 +1,27 @@
-import asyncio, sys, os, time
-sys.path.insert(0, os.path.dirname(__file__))
+import asyncio
 from deepseek_manager import DeepSeekManager
 
-async def main():
+async def test():
     m = DeepSeekManager()
-    for prompt in ["Hello", "create a html document like 10 lines", "what is 2+2"]:
-        t = time.perf_counter()
-        result = await m.chat_completion(
-            messages=[{"role": "user", "content": prompt}],
-            stream=False,
-        )
-        elapsed = (time.perf_counter() - t) * 1000
-        content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-        err = result.get("error")
-        print(f"[{elapsed:.0f}ms] prompt={prompt!r:.30s}  chars={len(content)}  err={err}")
-        if content:
-            print(f"  preview: {content[:100]!r}")
 
-asyncio.run(main())
+    original = m.session.post
+    def patched(url, **kwargs):
+        if "chat/completion" in url and "create_pow" not in url:
+            p = kwargs.get("json", {})
+            print("PROMPT:", repr(p.get("prompt", ""))[:300])
+            print("CONVERSATION:")
+            for msg in p.get("conversation", []):
+                print(f"  [{msg['role']}]: {repr(msg['content'])[:200]}")
+        return original(url, **kwargs)
+    m.session.post = patched
+
+    result = await m.chat_completion(
+        messages=[
+            {"role": "system", "content": "You are ANAI. Current workspace: my-project."},
+            {"role": "user", "content": "which folder am i working in"}
+        ],
+        stream=False,
+    )
+    print("ANSWER:", result["choices"][0]["message"]["content"])
+
+asyncio.run(test())
