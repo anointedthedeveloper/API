@@ -345,37 +345,59 @@ class DeepSeekManager:
             if stream:
                 return self._stream_response(payload, headers)
 
-            response = self.session.post(  # noqa: E501
+            response = self.session.post(
                 f"{self.api_url}/chat/completion",
                 json=payload,
                 headers=headers,
+                stream=True,
                 timeout=120,
             )
 
             if response.status_code != 200:
                 return {"error": f"API error: {response.status_code} - {response.text[:200]}"}
 
-            data = response.json()
-            if data.get("code") != 0:
-                # Token rejected — clear it so the UI shows unauthenticated
-                if data.get("code") in [40003, 40001]:
-                    self._clear_credentials()
-                return {"error": data.get("msg", "Unknown API error")}
-
-            response_data = data.get("data", {})
-            content = (response_data.get("answer")
-                       or response_data.get("message", {}).get("content")
-                       or response_data.get("content", ""))
+            # DeepSeek always streams — collect content from patch chunks
+            content = ""
+            usage = {}
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                line_str = line.decode("utf-8") if isinstance(line, bytes) else line
+                if not line_str.startswith("data: "):
+                    continue
+                try:
+                    chunk = json.loads(line_str[6:])
+                except json.JSONDecodeError:
+                    continue
+                # error chunk
+                if chunk.get("code") not in (0, None):
+                    if chunk.get("code") in [40003, 40001]:
+                        self._clear_credentials()
+                    return {"error": chunk.get("msg", "Unknown API error")}
+                p = chunk.get("p", "")
+                o = chunk.get("o", "")
+                v = chunk.get("v")
+                # content delta: no "p" key (short token) or first fragment append
+                if "p" not in chunk and isinstance(v, str):
+                    content += v
+                elif "p" not in chunk and isinstance(v, dict):
+                    # initial chunk: v.response.fragments[0].content has first token
+                    first = (v.get("response", {}).get("fragments") or [{}])[0].get("content", "")
+                    if first:
+                        content += first
+                elif p == "response/fragments/-1/content" and o == "APPEND" and isinstance(v, str):
+                    content += v
+                elif p == "response" and o == "BATCH" and isinstance(v, list):
+                    for patch in v:
+                        if patch.get("p") == "accumulated_token_usage":
+                            usage["total_tokens"] = patch.get("v", 0)
 
             return {
-                "choices": [{
-                    "message": {"role": "assistant", "content": content},
-                    "finish_reason": "stop",
-                }],
+                "choices": [{"message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
                 "usage": {
-                    "prompt_tokens": response_data.get("prompt_tokens", 0),
-                    "completion_tokens": response_data.get("completion_tokens", 0),
-                    "total_tokens": response_data.get("total_tokens", 0),
+                    "prompt_tokens": usage.get("prompt_tokens", 0),
+                    "completion_tokens": usage.get("completion_tokens", 0),
+                    "total_tokens": usage.get("total_tokens", 0),
                 },
             }
 
@@ -402,14 +424,48 @@ class DeepSeekManager:
                     yield "data: [DONE]\n\n"
                     return
 
-                for line in response.iter_lines():
-                    if line:
-                        line_str = line.decode("utf-8") if isinstance(line, bytes) else line
-                        if line_str.startswith("data: "):
-                            yield f"{line_str}\n\n"
-                            if line_str == "data: [DONE]":
-                                break
+                msg_id = f"chatcmpl-stream"
+                import time as _time
+                created = int(_time.time())
+                model = payload.get("model", "deepseek-chat")
 
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+                    line_str = line.decode("utf-8") if isinstance(line, bytes) else line
+                    if not line_str.startswith("data: "):
+                        continue
+                    try:
+                        chunk = json.loads(line_str[6:])
+                    except json.JSONDecodeError:
+                        continue
+
+                    p = chunk.get("p", "")
+                    o = chunk.get("o", "")
+                    v = chunk.get("v")
+
+                    delta_text = None
+                    if "p" not in chunk and isinstance(v, str):
+                        delta_text = v
+                    elif "p" not in chunk and isinstance(v, dict):
+                        first = (v.get("response", {}).get("fragments") or [{}])[0].get("content", "")
+                        if first:
+                            delta_text = first
+                    elif p == "response/fragments/-1/content" and o == "APPEND" and isinstance(v, str):
+                        delta_text = v
+                    elif p == "response/status" and v == "FINISHED":
+                        finish = {"id": msg_id, "object": "chat.completion.chunk", "created": created,
+                                  "model": model, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
+                        yield f"data: {json.dumps(finish)}\n\n"
+                        yield "data: [DONE]\n\n"
+                        return
+
+                    if delta_text is not None:
+                        sse = {"id": msg_id, "object": "chat.completion.chunk", "created": created,
+                               "model": model, "choices": [{"index": 0, "delta": {"content": delta_text}, "finish_reason": None}]}
+                        yield f"data: {json.dumps(sse)}\n\n"
+
+                yield "data: [DONE]\n\n"
         except Exception as e:
             logger.exception("Stream error")
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
