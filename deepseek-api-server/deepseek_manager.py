@@ -28,8 +28,7 @@ class DeepSeekManager:
     def __init__(self, db_path: str = "deepseek_credentials.db"):
         self.db_path = db_path
         self.api_url = "https://chat.deepseek.com/api/v0"
-        self.session = requests.Session()
-        self.session.headers.update({
+        self._session_headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "application/json, text/plain, */*",
             "Accept-Language": "en-US,en;q=0.9",
@@ -37,10 +36,16 @@ class DeepSeekManager:
             "Origin": "https://chat.deepseek.com",
             "Content-Type": "application/json",
             "x-app-version": "20241129.1",
-        })
+        }
+        self.session = self._make_session()
         self._pow_cache: Optional[Dict] = None
         self._executor = ThreadPoolExecutor(max_workers=2)
         self._init_database()
+
+    def _make_session(self) -> requests.Session:
+        s = requests.Session()
+        s.headers.update(self._session_headers)
+        return s
 
     def _init_database(self) -> None:
         with sqlite3.connect(self.db_path) as conn:
@@ -123,10 +128,11 @@ class DeepSeekManager:
             conn.commit()
 
     def _solve_pow(self, target_path: str, token: Optional[str] = None) -> Optional[str]:
-        """Fetch and solve DeepSeek Proof-of-Work challenge."""
+        """Fetch and solve DeepSeek Proof-of-Work challenge (uses its own session — thread-safe)."""
         try:
+            sess = self._make_session()  # fresh session per thread to avoid pool conflicts
             headers = {"Authorization": f"Bearer {token}"} if token else {}
-            resp = self.session.post(
+            resp = sess.post(
                 f"{self.api_url}/chat/create_pow_challenge",
                 json={"target_path": target_path},
                 headers=headers,
@@ -286,27 +292,34 @@ class DeepSeekManager:
         return token
 
     async def _create_chat_session(self, token: str) -> Optional[str]:
-        try:
-            response = self.session.post(
-                f"{self.api_url}/chat_session/create",
-                headers={"Authorization": f"Bearer {token}"},
-                json={"character_id": None},
-                timeout=30,
-            )
-            logger.debug("Session create status: %d body: %s", response.status_code, response.text[:300])
-            data = response.json()
-            if data.get("code") != 0:
-                logger.warning("Session creation failed, using fallback session ID")
-                return "11522221-f172-40ab-ac7e-72c45682dd95"
-            session_id = (data.get("data", {}).get("biz_data", {}).get("chat_session", {}).get("id")
-                          or data.get("data", {}).get("biz_data", {}).get("id")
-                          or data.get("data", {}).get("id")
-                          or data.get("id"))
-            logger.info("Created chat session: %s", session_id)
-            return session_id
-        except Exception as e:
-            logger.exception("Session creation error, using fallback session ID")
-            return "11522221-f172-40ab-ac7e-72c45682dd95"
+        for attempt in range(2):  # retry once on connection error
+            try:
+                response = self.session.post(
+                    f"{self.api_url}/chat_session/create",
+                    headers={"Authorization": f"Bearer {token}"},
+                    json={"character_id": None},
+                    timeout=30,
+                )
+                logger.debug("Session create status: %d body: %s", response.status_code, response.text[:300])
+                data = response.json()
+                if data.get("code") != 0:
+                    logger.warning("Session creation failed: %s", data.get("msg"))
+                    return None
+                session_id = (data.get("data", {}).get("biz_data", {}).get("chat_session", {}).get("id")
+                              or data.get("data", {}).get("biz_data", {}).get("id")
+                              or data.get("data", {}).get("id")
+                              or data.get("id"))
+                logger.info("Created chat session: %s", session_id)
+                return session_id
+            except requests.exceptions.ConnectionError as e:
+                logger.warning("Session create connection error (attempt %d): %s", attempt + 1, e)
+                if attempt == 0:
+                    self.session = self._make_session()  # reset the shared session and retry
+                    continue
+                return None
+            except Exception as e:
+                logger.exception("Session creation error")
+                return None
 
     async def chat_completion(
         self,
