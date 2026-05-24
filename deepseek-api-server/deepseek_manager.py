@@ -1,8 +1,10 @@
 import json
 import sqlite3
 import time
+import asyncio
 import logging
 import requests
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
@@ -36,6 +38,8 @@ class DeepSeekManager:
             "Content-Type": "application/json",
             "x-app-version": "20241129.1",
         })
+        self._pow_cache: Optional[Dict] = None
+        self._executor = ThreadPoolExecutor(max_workers=2)
         self._init_database()
 
     def _init_database(self) -> None:
@@ -316,7 +320,12 @@ class DeepSeekManager:
             error_msg = {"error": "Not authenticated. Please paste your token first."}
             return self._error_stream(error_msg) if stream else error_msg
 
-        session_id = await self._create_chat_session(token)
+        # Run session creation and POW solve in parallel
+        loop = asyncio.get_event_loop()
+        session_task = asyncio.ensure_future(self._create_chat_session(token))
+        pow_task = loop.run_in_executor(self._executor, self._solve_pow, "/api/v0/chat/completion", token)
+        session_id, pow_response = await asyncio.gather(session_task, pow_task)
+
         if not session_id:
             error_msg = {"error": "Failed to create chat session. Your token may be invalid or expired."}
             return self._error_stream(error_msg) if stream else error_msg
@@ -340,7 +349,19 @@ class DeepSeekManager:
             if conversation:
                 payload["conversation"] = conversation
 
-            headers = self._get_chat_headers(token)
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "x-app-version": "2.0.0",
+                "x-client-locale": "en_US",
+                "x-client-platform": "web",
+                "x-client-timezone-offset": "3600",
+                "x-client-version": "2.0.0",
+                "Referer": "https://chat.deepseek.com/",
+                "Origin": "https://chat.deepseek.com",
+            }
+            if pow_response:
+                headers["x-ds-pow-response"] = pow_response
 
             if stream:
                 return self._stream_response(payload, headers)
