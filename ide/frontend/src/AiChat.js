@@ -1,12 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
-  VscAdd,
-  VscCircleFilled,
-  VscClearAll,
-  VscCopy,
-  VscDebugStop,
-  VscHistory,
-  VscSend,
+  VscAdd, VscCircleFilled, VscClearAll, VscCopy, VscCheck,
+  VscDebugStop, VscHistory, VscSend,
 } from "react-icons/vsc";
 import "./AiChat.css";
 
@@ -16,16 +11,15 @@ const DEFAULT_SESSION = () => ({
   id: `${Date.now()}`,
   title: "New Chat",
   createdAt: Date.now(),
-  messages: [
-    {
-      role: "assistant",
-      content: "Hi, I am ANAI. I can explain code, create or edit files in the open folder, and run terminal commands when you ask.",
-      timestamp: Date.now(),
-    },
-  ],
+  messages: [{
+    role: "assistant",
+    content: "Hi, I am ANAI. I can explain code, create or edit files in the open folder, and run terminal commands when you ask.",
+    timestamp: Date.now(),
+  }],
 });
 
-const buildSystemPrompt = (workspaceName, fileTree) => `You are ANAI, a coding AI assistant inside a VS Code-like IDE.
+const buildSystemPrompt = (workspaceName, fileTree) =>
+  `You are ANAI, a coding AI assistant inside a VS Code-like IDE.
 The owner and creator of this AI is anointedthedeveloper.
 Be concise, practical, and friendly.
 Current workspace: ${workspaceName || "No folder selected"}.
@@ -48,9 +42,9 @@ const extractActions = (text) => {
   const readRe  = /```anai-read\s+path=([^\n]+)\s*```/gi;
   const mkdirRe = /```anai-mkdir\s+path=([^\n]+)\s*```/gi;
   let m;
-  while ((m = writeRe.exec(text))  !== null) actions.push({ type: "write",  path: m[1].trim(), content: m[2].replace(/\n$/, "") });
-  while ((m = readRe.exec(text))   !== null) actions.push({ type: "read",   path: m[1].trim() });
-  while ((m = mkdirRe.exec(text))  !== null) actions.push({ type: "mkdir",  path: m[1].trim() });
+  while ((m = writeRe.exec(text))  !== null) actions.push({ type: "write", path: m[1].trim(), content: m[2].replace(/\n$/, "") });
+  while ((m = readRe.exec(text))   !== null) actions.push({ type: "read",  path: m[1].trim() });
+  while ((m = mkdirRe.exec(text))  !== null) actions.push({ type: "mkdir", path: m[1].trim() });
   return actions;
 };
 
@@ -66,7 +60,6 @@ const cleanText = (text) =>
     .replace(/<think>[\s\S]*$/gi, "")
     .trim();
 
-// Resolve a relative path like "src/foo/bar.js" into a FileSystemDirectoryHandle
 async function resolveHandle(rootHandle, relPath, isFile) {
   const parts = relPath.replace(/\\/g, "/").split("/").filter(Boolean);
   let dir = rootHandle;
@@ -74,14 +67,12 @@ async function resolveHandle(rootHandle, relPath, isFile) {
     dir = await dir.getDirectoryHandle(parts[i], { create: true });
   }
   const name = parts[parts.length - 1];
-  if (isFile) return dir.getFileHandle(name, { create: true });
-  return dir.getDirectoryHandle(name, { create: true });
+  return isFile ? dir.getFileHandle(name, { create: true }) : dir.getDirectoryHandle(name, { create: true });
 }
 
 async function readHandleFile(rootHandle, relPath) {
   const fh = await resolveHandle(rootHandle, relPath, true);
-  const file = await fh.getFile();
-  return file.text();
+  return (await fh.getFile()).text();
 }
 
 async function writeHandleFile(rootHandle, relPath, content) {
@@ -100,24 +91,37 @@ const flattenTree = (items = [], depth = 0, limit = 80, lines = []) => {
   return lines;
 };
 
+// Code block with copy + copied feedback
+function CodeBlock({ lang, code }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard?.writeText(code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <div className="code-block">
+      <div className="code-block-header">
+        <span className="code-lang">{lang || "text"}</span>
+        <button type="button" className={`copy-btn ${copied ? "copied" : ""}`} onClick={copy}>
+          {copied ? <><VscCheck /> Copied!</> : <><VscCopy /> Copy</>}
+        </button>
+      </div>
+      <pre className="code-pre"><code>{code}</code></pre>
+    </div>
+  );
+}
+
 const renderContent = (content) =>
   content.split(/(```[\s\S]*?```)/g).filter(Boolean).map((part, i) => {
-    if (!part.startsWith("```")) return <span key={i} className="message-text-part">{part}</span>;
+    if (!part.startsWith("```")) {
+      return <span key={i} className="message-text-part">{part}</span>;
+    }
     const m = part.match(/^```([^\n]*)\n?([\s\S]*?)```$/);
-    const lang = m?.[1]?.trim() || "text";
-    const code = m?.[2] || "";
-    return (
-      <div key={i} className="code-block">
-        <div className="code-block-header">
-          <span>{lang}</span>
-          <button type="button" onClick={() => navigator.clipboard?.writeText(code)}><VscCopy /> Copy</button>
-        </div>
-        <pre><code>{code}</code></pre>
-      </div>
-    );
+    return <CodeBlock key={i} lang={m?.[1]?.trim()} code={m?.[2] || ""} />;
   });
 
-function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpenFile, onTerminalOutput }) {
+function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpenFile }) {
   const [sessions, setSessions] = useState(() => {
     try {
       const s = JSON.parse(localStorage.getItem("anai.chatSessions") || "[]");
@@ -168,10 +172,7 @@ function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpen
     const actions = extractActions(text);
     if (!actions.length) return;
     const { dirHandle, onWorkspaceRefresh, onOpenFile } = propsRef.current;
-    if (!dirHandle) {
-      push({ role: "assistant", content: "No folder open — cannot write files." });
-      return;
-    }
+    if (!dirHandle) { push({ role: "assistant", content: "No folder open — cannot write files." }); return; }
     const results = [];
     for (const a of actions) {
       try {
@@ -179,11 +180,7 @@ function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpen
           await writeHandleFile(dirHandle, a.path, a.content);
           onWorkspaceRefresh?.();
           results.push(`✓ Wrote ${a.path}`);
-          // Try to open the file in the editor
-          try {
-            const fh = await resolveHandle(dirHandle, a.path, true);
-            onOpenFile?.(fh, a.path);
-          } catch {}
+          try { onOpenFile?.(await resolveHandle(dirHandle, a.path, true), a.path); } catch {}
         } else if (a.type === "read") {
           const content = await readHandleFile(dirHandle, a.path);
           results.push(`Read ${a.path}:\n\`\`\`\n${content.slice(0, 4000)}\n\`\`\``);
@@ -192,9 +189,7 @@ function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpen
           onWorkspaceRefresh?.();
           results.push(`✓ Created folder ${a.path}`);
         }
-      } catch (e) {
-        results.push(`✗ ${a.type} ${a.path}: ${e.message}`);
-      }
+      } catch (e) { results.push(`✗ ${a.type} ${a.path}: ${e.message}`); }
     }
     push({ role: "assistant", content: results.join("\n") });
   }, [push]);
@@ -205,24 +200,27 @@ function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpen
     patchLast((m) => ({ ...m, pending: false, stopped: true }));
   }, [patchLast]);
 
+  // send is defined before continueGeneration so the ref is valid
+  const sendRef = useRef(null);
+
   const continueGeneration = useCallback(() => {
     setTruncated(false);
-    send(null, "continue");
-  }, [send]);
+    sendRef.current?.(null, "__continue__");
+  }, []);
 
   const send = useCallback(async (e, overrideText) => {
     e?.preventDefault();
-    const text = overrideText || input.trim();
+    const isContinue = overrideText === "__continue__";
+    const text = isContinue ? "Please continue exactly where you left off." : (overrideText || input.trim());
     if (!text) { if (loading) stop(); return; }
     if (loading) stop();
 
-    // Capture history BEFORE pushing new messages so we don't send duplicates
     const history = messages
       .filter((m) => m.content && !m.pending)
       .slice(-8)
       .map((m) => ({ role: m.role, content: m.content.slice(0, 600) }));
 
-    push({ role: "user", content: text });
+    if (!isContinue) push({ role: "user", content: text });
     push({ role: "assistant", content: "", pending: true });
     setInput("");
     setLoading(true);
@@ -235,7 +233,7 @@ function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpen
     try {
       const { fileTree } = propsRef.current;
       const treeStr = fileTree ? flattenTree(fileTree).join("\n") : "";
-      const sysPrompt = buildSystemPrompt(workspaceName, treeStr);
+      const sysPrompt = buildSystemPrompt(propsRef.current.workspaceName, treeStr);
 
       const res = await fetch(API_URL, {
         method: "POST",
@@ -277,9 +275,7 @@ function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpen
               const snapshot = full;
               patchLast((m) => ({ ...m, content: cleanText(snapshot) }));
             }
-            if (finishReason === "length") {
-              setTruncated(true);
-            }
+            if (finishReason === "length") setTruncated(true);
           } catch {}
         }
       }
@@ -300,13 +296,17 @@ function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpen
       abortRef.current = null;
       requestAnimationFrame(() => inputRef.current?.focus());
     }
-  }, [input, loading, messages, patchLast, push, runActions, stop, workspaceName]);
+  }, [input, loading, messages, patchLast, push, runActions, stop]);
+
+  // Keep sendRef in sync so continueGeneration always calls the latest send
+  sendRef.current = send;
 
   const newChat = () => {
     const s = DEFAULT_SESSION();
     setSessions((prev) => [s, ...prev]);
     setActiveId(s.id);
     setInput("");
+    setTruncated(false);
   };
 
   return (
@@ -332,7 +332,9 @@ function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpen
               <VscCircleFilled /> {workspaceName ? `Folder: ${workspaceName}` : "No folder open"}
             </div>
           </div>
-          <button className="clear-btn" onClick={() => updateActive((s) => ({ ...s, messages: DEFAULT_SESSION().messages }))} title="Clear chat"><VscClearAll /></button>
+          <button className="clear-btn" onClick={() => { updateActive((s) => ({ ...s, messages: DEFAULT_SESSION().messages })); setTruncated(false); }} title="Clear chat">
+            <VscClearAll />
+          </button>
         </div>
 
         <div className="messages-container">
@@ -352,12 +354,13 @@ function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpen
           <div ref={endRef} />
         </div>
 
+        {truncated && !loading && (
+          <button type="button" className="continue-btn" onClick={continueGeneration}>
+          Continue generating
+        </button>
+        )}
+
         <form className="input-form" onSubmit={send}>
-          {truncated && !loading && (
-            <button type="button" className="continue-btn" onClick={continueGeneration}>
-              ↓ Continue
-            </button>
-          )}
           <input
             ref={inputRef}
             type="text"

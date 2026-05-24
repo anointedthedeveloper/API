@@ -368,14 +368,29 @@
   font-size: 11px;
 }
 
-.code-block-header button {
+.copy-btn {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  border: 0;
+  padding: 3px 8px;
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
   background: transparent;
-  color: #d8d8d8;
+  color: #b0b0b0;
   cursor: pointer;
+  font-size: 11px;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.copy-btn:hover {
+  background: #2a2a2a;
+  border-color: #555;
+  color: #fff;
+}
+
+.copy-btn.copied {
+  border-color: #4caf50;
+  color: #4caf50;
 }
 
 .code-block pre {
@@ -496,19 +511,28 @@
 .continue-btn {
   display: flex;
   align-items: center;
-  gap: 6px;
-  align-self: flex-start;
-  margin: 0 12px 6px;
-  padding: 6px 14px;
-  border: 1px solid #4a9eff;
-  border-radius: 14px;
-  background: transparent;
-  color: #4a9eff;
+  justify-content: center;
+  gap: 7px;
+  align-self: center;
+  margin: 0 12px 8px;
+  padding: 7px 20px;
+  border: 1px solid #3a3a3a;
+  border-radius: 20px;
+  background: #1e1e1e;
+  color: #c8c8c8;
   cursor: pointer;
   font-size: 12px;
-  transition: background 0.15s;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  width: fit-content;
 }
 
 .continue-btn:hover {
-  background: #1a3a5c;
+  background: #2a2a2a;
+  border-color: #555;
+  color: #fff;
+}
+
+.continue-btn::before {
+  content: "↓";
+  font-size: 13px;
 }
