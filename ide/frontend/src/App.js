@@ -78,6 +78,7 @@ function App() {
   const [fileHandles, setFileHandles] = useState({});      // path → FileSystemFileHandle
   const [terminalOutput, setTerminalOutput] = useState([]);
   const [terminalInput, setTerminalInput] = useState("");
+  const [terminalCwd, setTerminalCwd] = useState(null);
   const [showExplorer, setShowExplorer] = useState(true);
   const [showChat, setShowChat] = useState(true);
   const [showTerminal, setShowTerminal] = useState(true);
@@ -193,15 +194,33 @@ function App() {
     }
   }, [createDialog, dirHandle, openFileByHandle, refreshTree]);
 
-  // ── Terminal (browser-side only — no backend) ──────────────────────────────
-  // We can't run real shell commands without a backend, so we show a note.
+  // ── Terminal ───────────────────────────────────────────────────────────────
   const runTerminal = useCallback(async (cmd) => {
     if (!cmd.trim()) return;
     setTerminalOutput((prev) => [...prev, `$ ${cmd}`]);
     setTerminalInput("");
     if (cmd.trim() === "clear") { setTerminalOutput([]); return; }
-    setTerminalOutput((prev) => [...prev, "⚠ Terminal commands require a backend server. Use the integrated terminal in your OS."]);
-  }, []);
+    try {
+      const res = await fetch("http://localhost:8080/api/terminal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ command: cmd, cwd: terminalCwd }),
+      });
+      const data = await res.json();
+      if (data.output) setTerminalOutput((prev) => [...prev, data.output]);
+      // track cd commands
+      const cdMatch = cmd.trim().match(/^cd\s+(.+)/);
+      if (cdMatch && data.exitCode === 0) {
+        setTerminalCwd((prev) => {
+          const target = cdMatch[1].trim();
+          if (!prev) return target;
+          return target.startsWith("/") || /^[A-Za-z]:/.test(target) ? target : `${prev}/${target}`;
+        });
+      }
+    } catch {
+      setTerminalOutput((prev) => [...prev, "⚠ Could not reach backend on port 8080."]);
+    }
+  }, [terminalCwd]);
 
   // ── Keyboard shortcuts ─────────────────────────────────────────────────────
 

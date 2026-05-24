@@ -1,6 +1,8 @@
 import asyncio
 import json
+import os
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -30,6 +32,11 @@ class TokenLoginRequest(BaseModel):
 
 class GoogleLoginRequest(BaseModel):
     id_token: str
+
+
+class TerminalRequest(BaseModel):
+    command: str
+    cwd: Optional[str] = None
 
 
 class ChatCompletionRequest(BaseModel):
@@ -226,6 +233,29 @@ async def chat_completions(request: ChatCompletionRequest):
         }],
         usage=response.get("usage")
     )
+
+
+@app.post("/api/terminal")
+async def run_terminal(request: TerminalRequest):
+    """Run a shell command and return output."""
+    try:
+        cwd = request.cwd or str(Path.home())
+        result = subprocess.run(
+            request.command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=30,
+        )
+        output = result.stdout or ""
+        if result.stderr:
+            output += ("\n" if output else "") + result.stderr
+        return {"output": output.rstrip(), "exitCode": result.returncode}
+    except subprocess.TimeoutExpired:
+        return {"output": "Error: command timed out after 30s", "exitCode": 1}
+    except Exception as e:
+        return {"output": f"Error: {e}", "exitCode": 1}
 
 
 @app.get("/health")

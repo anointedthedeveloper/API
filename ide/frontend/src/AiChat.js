@@ -121,7 +121,7 @@ const renderContent = (content) =>
     return <CodeBlock key={i} lang={m?.[1]?.trim()} code={m?.[2] || ""} />;
   });
 
-function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpenFile }) {
+function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpenFile, onTerminalOutput }) {
   const [sessions, setSessions] = useState(() => {
     try {
       const s = JSON.parse(localStorage.getItem("anai.chatSessions") || "[]");
@@ -136,7 +136,7 @@ function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpen
   const endRef = useRef(null);
   const inputRef = useRef(null);
   const propsRef = useRef({});
-  propsRef.current = { workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpenFile };
+  propsRef.current = { workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpenFile, onTerminalOutput };
 
   const active = sessions.find((s) => s.id === activeId) || sessions[0];
   const messages = useMemo(() => active?.messages || [], [active]);
@@ -171,7 +171,7 @@ function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpen
   const runActions = useCallback(async (text) => {
     const actions = extractActions(text);
     if (!actions.length) return;
-    const { dirHandle, onWorkspaceRefresh, onOpenFile } = propsRef.current;
+    const { dirHandle, onWorkspaceRefresh, onOpenFile, onTerminalOutput } = propsRef.current;
     if (!dirHandle) { push({ role: "assistant", content: "No folder open — cannot write files." }); return; }
     const results = [];
     for (const a of actions) {
@@ -180,6 +180,7 @@ function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpen
           await writeHandleFile(dirHandle, a.path, a.content);
           onWorkspaceRefresh?.();
           results.push(`✓ Wrote ${a.path}`);
+          onTerminalOutput?.(`[ANAI] Wrote ${a.path}`);
           try { onOpenFile?.(await resolveHandle(dirHandle, a.path, true), a.path); } catch {}
         } else if (a.type === "read") {
           const content = await readHandleFile(dirHandle, a.path);
@@ -188,6 +189,7 @@ function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpen
           await resolveHandle(dirHandle, a.path, false);
           onWorkspaceRefresh?.();
           results.push(`✓ Created folder ${a.path}`);
+          onTerminalOutput?.(`[ANAI] Created folder ${a.path}`);
         }
       } catch (e) { results.push(`✗ ${a.type} ${a.path}: ${e.message}`); }
     }
