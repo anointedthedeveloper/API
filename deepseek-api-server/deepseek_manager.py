@@ -1,12 +1,12 @@
 import json
 import sqlite3
 import time
-import hashlib
 import logging
 import requests
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
+from pow_native import DeepSeekPOW
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -131,39 +131,18 @@ class DeepSeekManager:
                 logger.warning("POW challenge fetch failed: %s", data.get("msg"))
                 return None
 
-            biz        = data["data"]["biz_data"]["challenge"]
-            algorithm  = biz["algorithm"]
-            challenge  = biz["challenge"]
-            salt       = biz["salt"]
-            difficulty = biz["difficulty"]
-            signature  = biz["signature"]
-            expire_at  = biz["expire_at"]
-
-            logger.info("Solving POW difficulty=%d", difficulty)
-
-            # Algorithm: sha3_256(challenge + salt + "_" + expire_at + "_" + nonce)
-            # Condition:  struct.unpack('<I', hash[:4])[0] < (2^32 / difficulty)
-            import struct
-            prefix = f"{salt}_{expire_at}_"
-            threshold = (2**32) // difficulty
-            answer = 0
-            while True:
-                h = hashlib.sha3_256((challenge + prefix + str(answer)).encode()).digest()
-                if struct.unpack("<I", h[:4])[0] < threshold:
-                    break
-                answer += 1
-
-            logger.info("POW solved: answer=%d", answer)
-            result = json.dumps({
-                "algorithm": algorithm,
-                "challenge": challenge,
-                "salt": salt,
-                "answer": answer,
-                "signature": signature,
+            biz = data["data"]["biz_data"]["challenge"]
+            config = {
+                "algorithm": biz["algorithm"],
+                "challenge": biz["challenge"],
+                "salt": biz["salt"],
+                "difficulty": biz["difficulty"],
+                "expire_at": biz["expire_at"],
+                "signature": biz["signature"],
                 "target_path": target_path,
-            }, separators=(",", ":"))
-            import base64
-            return base64.b64encode(result.encode()).decode()
+            }
+            logger.info("Solving POW difficulty=%d", config["difficulty"])
+            return DeepSeekPOW().solve_challenge(config)
         except Exception as e:
             logger.error("POW solve error: %s", e)
             return None
@@ -185,9 +164,6 @@ class DeepSeekManager:
         if pow_response:
             headers["x-ds-pow-response"] = pow_response
         return headers
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute("DELETE FROM credentials WHERE id = 1")
-            conn.commit()
 
     async def login_with_manual_token(self, token_input) -> AuthStatus:
         token = self._extract_token_string(token_input)
@@ -367,7 +343,7 @@ class DeepSeekManager:
             if stream:
                 return self._stream_response(payload, headers)
 
-            response = self.session.post(
+            response = self.session.post(  # noqa: E501
                 f"{self.api_url}/chat/completion",
                 json=payload,
                 headers=headers,
@@ -410,7 +386,7 @@ class DeepSeekManager:
         yield f"data: {json.dumps(error_msg)}\n\n"
         yield "data: [DONE]\n\n"
 
-    async def _stream_response(self, payload: dict, headers: dict):
+    async def _stream_response(self, payload: dict, headers: dict):  # noqa: E501
         try:
             with self.session.post(
                 f"{self.api_url}/chat/completion",

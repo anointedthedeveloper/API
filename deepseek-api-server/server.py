@@ -187,19 +187,18 @@ async def login_with_google(request: GoogleLoginRequest):
 async def chat_completions(request: ChatCompletionRequest):
     """OpenAI-compatible chat completions endpoint."""
     if request.stream:
-        response_generator = await manager.chat_completion(
-            messages=request.messages,
-            stream=True,
-            temperature=request.temperature,
-            model=request.model
-        )
         async def stream_response():
-            async for chunk in response_generator:
+            async for chunk in manager.chat_completion(
+                messages=request.messages,
+                stream=True,
+                temperature=request.temperature,
+                model=request.model,
+            ):
                 yield chunk
         return StreamingResponse(
             stream_response(),
             media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
         )
 
     response = await manager.chat_completion(
