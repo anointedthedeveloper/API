@@ -118,12 +118,14 @@ class DeepSeekManager:
             conn.execute("DELETE FROM credentials WHERE id = 1")
             conn.commit()
 
-    def _solve_pow(self, target_path: str) -> Optional[str]:
+    def _solve_pow(self, target_path: str, token: Optional[str] = None) -> Optional[str]:
         """Fetch and solve DeepSeek Proof-of-Work challenge."""
         try:
+            headers = {"Authorization": f"Bearer {token}"} if token else {}
             resp = self.session.post(
                 f"{self.api_url}/chat/create_pow_challenge",
                 json={"target_path": target_path},
+                headers=headers,
                 timeout=15,
             )
             data = resp.json()
@@ -149,7 +151,7 @@ class DeepSeekManager:
 
     def _get_chat_headers(self, token: str) -> Dict[str, str]:
         """Build full headers including POW for chat/completion."""
-        pow_response = self._solve_pow("/api/v0/chat/completion")
+        pow_response = self._solve_pow("/api/v0/chat/completion", token=token)
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",

@@ -19,16 +19,13 @@ class DeepSeekPOW:
     """Solves DeepSeek PoW challenge via Node.js WASM bridge."""
 
     def solve_challenge(self, config: Dict[str, Any]) -> str:
-        """Solve PoW challenge and return base64-encoded response.
+        """Solve PoW challenge and return base64-encoded response."""
+        b64 = self._solve_via_node(config)
+        if b64 is not None:
+            return b64
 
-        Tries Node.js WASM solver first (fast + correct),
-        falls back to pure Python if Node.js unavailable.
-        """
-        answer = self._solve_via_node(config)
-        if answer is None:
-            print("[PoW] Node.js solver failed, trying pure Python fallback...")
-            answer = self._solve_pure_python(config)
-
+        print("[PoW] Node.js solver failed, trying pure Python fallback...")
+        answer = self._solve_pure_python(config)
         if answer is None:
             raise RuntimeError("PoW solve failed with both methods")
 
@@ -42,26 +39,23 @@ class DeepSeekPOW:
         }
         return base64.b64encode(json.dumps(result).encode()).decode()
 
-    def _solve_via_node(self, config: Dict[str, Any]) -> Optional[int]:
-        """Call Node.js WASM solver subprocess."""
+    def _solve_via_node(self, config: Dict[str, Any]) -> Optional[str]:
+        """Call Node.js WASM solver, returns ready-to-use base64 response."""
         try:
-            input_json = json.dumps(config)
             result = subprocess.run(
-                ["node", POW_SOLVER_JS, input_json],
+                ["node", POW_SOLVER_JS, json.dumps(config)],
                 capture_output=True,
                 text=True,
                 timeout=300,
                 cwd=SCRIPT_DIR,
             )
             if result.returncode == 0 and result.stdout.strip():
-                # stdout is base64-encoded response, decode to get answer
-                decoded = json.loads(base64.b64decode(result.stdout.strip()))
-                answer = decoded.get("answer")
-                print(f"[PoW-Node] nonce={answer}")
-                return answer
-            else:
-                print(f"[PoW-Node] Failed: {result.stderr[:200]}")
-                return None
+                b64 = result.stdout.strip()
+                decoded = json.loads(base64.b64decode(b64))
+                print(f"[PoW-Node] nonce={decoded.get('answer')}")
+                return b64  # return the complete base64 directly
+            print(f"[PoW-Node] Failed: {result.stderr[:200]}")
+            return None
         except FileNotFoundError:
             print("[PoW-Node] node not found")
             return None
