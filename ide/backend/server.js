@@ -33,6 +33,26 @@ function resolveSafePath(relativePath, projectRoot) {
   return target;
 }
 
+let currentWorkspaceContext = {
+  name: null,
+  tree: null,
+  activeFile: null,
+  cwd: null,
+  profile: null,
+};
+
+function buildWorkspaceSystemPrompt() {
+  const name = currentWorkspaceContext.name || "No folder selected";
+  const cwd = currentWorkspaceContext.cwd || "unknown";
+  const tree = currentWorkspaceContext.tree ? `\nWorkspace files:\n${currentWorkspaceContext.tree}` : "";
+  return `You are ANAI, a coding assistant inside a web-based IDE.
+You are connected to a local project workspace.
+Current workspace: ${name}
+Current working location: ${cwd}
+${tree}
+Use this workspace context when answering questions. If the user asks where they are or what folder is open, answer from this workspace information. Do not claim any access beyond the provided workspace metadata.`;
+}
+
 app.get("/", (req, res) => {
   res.json({ message: "ANAI backend bridge is running.", projectRoot: DEFAULT_PROJECT_ROOT });
 });
@@ -64,13 +84,31 @@ app.post("/api/write-file", async (req, res) => {
 });
 
 app.post("/api/terminal", async (req, res) => {
-  const { command, cwd } = req.body;
+  const { command, cwd, profile } = req.body;
   if (!command || typeof command !== "string") {
     return res.status(400).json({ output: "Error: command is required.", exitCode: 1 });
   }
 
-  const workingDir = cwd ? path.resolve(cwd) : DEFAULT_PROJECT_ROOT;
-  exec(command, { cwd: workingDir, shell: true, maxBuffer: 1024 * 1024 * 2 }, (err, stdout, stderr) => {
+  const shellMap = {
+    powershell: "powershell.exe -NoLogo -Command",
+    cmd: "cmd.exe /d /s /c",
+    bash: "bash -lc",
+    pwsh: "pwsh -NoLogo -Command",
+  };
+
+  const shell = shellMap[profile] || true;
+  let workingDir = DEFAULT_PROJECT_ROOT;
+  if (cwd) {
+    if (path.isAbsolute(cwd) && fs.existsSync(cwd)) {
+      workingDir = cwd;
+    } else {
+      const maybeRoot = path.resolve(DEFAULT_PROJECT_ROOT, cwd);
+      if (fs.existsSync(maybeRoot)) {
+        workingDir = maybeRoot;
+      }
+    }
+  }
+  exec(command, { cwd: workingDir, shell, maxBuffer: 1024 * 1024 * 2 }, (err, stdout, stderr) => {
     if (err && err.code !== 0) {
       return res.json({ output: `${stdout || ""}${stderr ? `\n${stderr}` : ""}`.trim(), exitCode: err.code || 1 });
     }
@@ -78,12 +116,38 @@ app.post("/api/terminal", async (req, res) => {
   });
 });
 
+app.post("/api/workspace", (req, res) => {
+  const { workspaceName, workspaceTree, activeFile, cwd, profile } = req.body;
+  currentWorkspaceContext = {
+    name: workspaceName || currentWorkspaceContext.name,
+    tree: workspaceTree || currentWorkspaceContext.tree,
+    activeFile: activeFile || currentWorkspaceContext.activeFile,
+    cwd: cwd || currentWorkspaceContext.cwd,
+    profile: profile || currentWorkspaceContext.profile,
+  };
+  res.json({ success: true, workspace: currentWorkspaceContext });
+});
+
+app.get("/api/workspace", (req, res) => {
+  res.json({ workspace: currentWorkspaceContext });
+});
+
 app.post("/v1/chat/completions", async (req, res) => {
   try {
+    const systemPrompt = buildWorkspaceSystemPrompt();
+    const forwardPayload = {
+      model: "deepseek-chat",
+      stream: req.body.stream ?? true,
+      messages: [
+        { role: "system", content: systemPrompt },
+        ...(req.body.messages || []),
+      ],
+    };
+
     const response = await fetch(DEEPSEEK_API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(req.body),
+      body: JSON.stringify(forwardPayload),
     });
 
     res.status(response.status);

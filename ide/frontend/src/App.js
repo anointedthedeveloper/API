@@ -3,7 +3,7 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import {
   VscChromeClose, VscFile, VscFolderOpened, VscNewFolder, VscNewFile,
   VscSave, VscSync, VscTerminal, VscFileCode, VscJson, VscGear,
-  VscColorMode, VscHistory,
+  VscColorMode, VscHistory, VscChevronRight, VscChevronDown,
 } from "react-icons/vsc";
 import AiChat from "./AiChat";
 import "./App.css";
@@ -52,6 +52,17 @@ async function buildTree(dirHandle, path = "") {
   });
 }
 
+function flattenTree(items = [], depth = 0, limit = 100, lines = []) {
+  for (const item of items) {
+    if (lines.length >= limit) break;
+    lines.push(`${"  ".repeat(depth)}${item.type === "folder" ? "/" : ""}${item.name}`);
+    if (item.children && item.children.length && lines.length < limit) {
+      flattenTree(item.children, depth + 1, limit, lines);
+    }
+  }
+  return lines;
+}
+
 // ── Language / icon helpers ──────────────────────────────────────────────────
 
 const EXT_LANG = { js:"javascript", jsx:"javascript", ts:"typescript", tsx:"typescript", py:"python", java:"java", cpp:"cpp", c:"c", cs:"csharp", php:"php", rb:"ruby", go:"go", rs:"rust", sql:"sql", html:"html", css:"css", scss:"scss", json:"json", xml:"xml", yaml:"yaml", yml:"yaml", md:"markdown", sh:"shell", bash:"shell" };
@@ -78,7 +89,10 @@ function App() {
   const [fileHandles, setFileHandles] = useState({});      // path → FileSystemFileHandle
   const [terminalOutput, setTerminalOutput] = useState([]);
   const [terminalInput, setTerminalInput] = useState("");
-  const [terminalCwd, setTerminalCwd] = useState(null);
+  const [terminalCwd, setTerminalCwd] = useState("");
+  const [terminalProfile, setTerminalProfile] = useState("powershell");
+  const [workspaceTreeText, setWorkspaceTreeText] = useState("");
+  const [expandedFolders, setExpandedFolders] = useState(new Set());
   const [showExplorer, setShowExplorer] = useState(true);
   const [showChat, setShowChat] = useState(true);
   const [showTerminal, setShowTerminal] = useState(true);
@@ -98,12 +112,33 @@ function App() {
 
   // ── Workspace ──────────────────────────────────────────────────────────────
 
+  const syncWorkspaceContext = useCallback(async ({ name, treeLines, activeFile, cwd, profile }) => {
+    try {
+      await fetch("http://localhost:3001/api/workspace", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspaceName: name,
+          workspaceTree: treeLines?.join("\n"),
+          activeFile,
+          cwd,
+          profile,
+        }),
+      });
+    } catch (err) {
+      console.warn("Unable to sync workspace metadata to backend", err);
+    }
+  }, []);
+
   const refreshTree = useCallback(async (handle) => {
     const root = handle || dirHandle;
     if (!root) return;
     const tree = await buildTree(root);
     setFileTree(tree);
-  }, [dirHandle]);
+    const treeLines = flattenTree(tree);
+    setWorkspaceTreeText(treeLines.join("\n"));
+    await syncWorkspaceContext({ name: root.name, treeLines, activeFile, cwd: root.name });
+  }, [dirHandle, activeFile, syncWorkspaceContext]);
 
   const openFolder = useCallback(async () => {
     try {
@@ -115,10 +150,14 @@ function App() {
       setFileHandles({});
       const tree = await buildTree(handle);
       setFileTree(tree);
+      const treeLines = flattenTree(tree);
+      setWorkspaceTreeText(treeLines.join("\n"));
+      setTerminalCwd(handle.name);
+      await syncWorkspaceContext({ name: handle.name, treeLines, cwd: handle.name });
     } catch (e) {
       if (e.name !== "AbortError") alert(`Could not open folder: ${e.message}`);
     }
-  }, []);
+  }, [syncWorkspaceContext]);
 
   // ── File ops ───────────────────────────────────────────────────────────────
 
@@ -130,10 +169,11 @@ function App() {
       setOpenFiles((prev) => prev.some((f) => f.path === relPath) ? prev : [...prev, { name, path: relPath }]);
       setActiveFile(relPath);
       setFileContent(content);
+      await syncWorkspaceContext({ activeFile: relPath });
     } catch (e) {
       console.error("open file error", e);
     }
-  }, []);
+  }, [syncWorkspaceContext]);
 
   const openFileByPath = useCallback(async (relPath) => {
     if (!dirHandle) return;
@@ -204,11 +244,10 @@ function App() {
       const res = await fetch("http://localhost:3001/api/terminal", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command: cmd, cwd: terminalCwd }),
+        body: JSON.stringify({ command: cmd, cwd: terminalCwd, profile: terminalProfile }),
       });
       const data = await res.json();
       if (data.output) setTerminalOutput((prev) => [...prev, data.output]);
-      // track cd commands
       const cdMatch = cmd.trim().match(/^cd\s+(.+)/);
       if (cdMatch && data.exitCode === 0) {
         setTerminalCwd((prev) => {
@@ -221,7 +260,7 @@ function App() {
       console.error(err);
       setTerminalOutput((prev) => [...prev, "⚠ Could not reach backend on port 3001."]);
     }
-  }, [terminalCwd]);
+  }, [terminalCwd, terminalProfile]);
 
   // ── Keyboard shortcuts ─────────────────────────────────────────────────────
 
@@ -239,17 +278,41 @@ function App() {
 
   // ── File tree renderer ─────────────────────────────────────────────────────
 
+  const toggleFolder = useCallback((path) => {
+    setExpandedFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }, []);
+
   const renderTree = useCallback((items, depth = 0) =>
-    items.map((item, i) => (
-      <div key={`${item.path}-${i}`} className={`file-item file-depth-${depth}`}
-        onClick={() => item.type === "file" ? openFileByHandle(item.handle, item.path) : null}
-        style={{ cursor: item.type === "file" ? "pointer" : "default" }}
-      >
-        <span className="file-icon">{getIcon(item.name, item.type === "folder")}</span>
-        <span className="file-name">{item.name}</span>
-        {item.children?.length > 0 && renderTree(item.children, depth + 1)}
-      </div>
-    )), [openFileByHandle]);
+    items.map((item, i) => {
+      const isFolder = item.type === "folder";
+      const expanded = expandedFolders.has(item.path);
+      return (
+        <div key={`${item.path}-${i}`} className={`file-item file-depth-${depth}`}>
+          <button
+            type="button"
+            className={`tree-toggle ${isFolder ? "folder-toggle" : "file-toggle"}`}
+            onClick={() => isFolder ? toggleFolder(item.path) : openFileByHandle(item.handle, item.path)}
+          >
+            {isFolder ? (expanded ? <VscChevronDown /> : <VscChevronRight />) : <span className="file-spacer" />}
+          </button>
+          <span className="file-icon">{getIcon(item.name, isFolder)}</span>
+          <span
+            className={`file-name ${isFolder ? "folder-name" : ""}`}
+            onClick={() => isFolder ? toggleFolder(item.path) : openFileByHandle(item.handle, item.path)}
+          >
+            {item.name}
+          </span>
+          {isFolder && expanded && item.children?.length > 0 && (
+            <div className="folder-children">{renderTree(item.children, depth + 1)}</div>
+          )}
+        </div>
+      );
+    }), [expandedFolders, openFileByHandle, toggleFolder]);
 
   const treeEl = useMemo(() => renderTree(fileTree), [fileTree, renderTree]);
 
@@ -350,7 +413,16 @@ function App() {
                   <PanelResizeHandle className="resize-handle horizontal" />
                   <Panel defaultSize={32} minSize={18} maxSize={60} className="terminal-panel">
                     <div className="panel-header terminal-header">
-                      <h2><VscTerminal /> Terminal</h2>
+                      <div>
+                        <h2><VscTerminal /> Terminal</h2>
+                        <div className="terminal-header-meta">{terminalCwd || dirHandle?.name || "Workspace root"}</div>
+                      </div>
+                      <select className="terminal-profile-select" value={terminalProfile} onChange={(e) => setTerminalProfile(e.target.value)}>
+                        <option value="powershell">PowerShell</option>
+                        <option value="cmd">Command Prompt</option>
+                        <option value="bash">Bash</option>
+                        <option value="pwsh">PowerShell Core</option>
+                      </select>
                     </div>
                     <div className="terminal-body terminal-interactive" ref={terminalRef} onClick={() => terminalInputRef.current?.focus()}>
                       {terminalOutput.length === 0
@@ -358,10 +430,10 @@ function App() {
                         : terminalOutput.map((line, i) => <pre key={i} className="terminal-line">{line}</pre>)
                       }
                       <div className="terminal-live-line">
-                        <span className="terminal-prompt">$</span>
+                        <span className="terminal-prompt">{terminalCwd ? `${terminalCwd} $` : "$"}</span>
                         <input ref={terminalInputRef} value={terminalInput} onChange={(e) => setTerminalInput(e.target.value)}
                           onKeyDown={(e) => e.key === "Enter" && runTerminal(terminalInput)}
-                          placeholder="Type command..." className="terminal-input" />
+                          placeholder={terminalCwd ? `Command in ${terminalCwd}` : "Type command..."} className="terminal-input" />
                       </div>
                     </div>
                   </Panel>
