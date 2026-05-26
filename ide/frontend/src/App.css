@@ -161,6 +161,11 @@ html.light-theme .vscode-button.secondary:hover {
 }
 
 html.light-theme .status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 14px;
   background: #0078d4;
   color: #ffffff;
 }
@@ -208,7 +213,9 @@ body {
 .status-right {
   display: flex;
   align-items: center;
+  gap: 12px;
   min-width: 0;
+  flex-wrap: wrap;
 }
 
 .header-left {
@@ -249,6 +256,18 @@ input {
   font: inherit;
 }
 
+kbd {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 6px;
+  border: 1px solid #3c3c3c;
+  background: #232428;
+  color: #d4d4d4;
+  font-size: 11px;
+  font-variant: all-small-caps;
+}
+
 .header-actions button,
 .save-button,
 .clone-button {
@@ -283,8 +302,12 @@ input {
 
 .workspace-shell {
   display: flex;
+  flex: 1;
   min-height: 0;
   overflow: hidden;
+  height: auto;
+  gap: 10px;
+  padding: 8px;
 }
 
 .panel-workspace,
@@ -364,12 +387,23 @@ input {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: var(--bg);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
 }
 
-.explorer-panel,
+.explorer-panel {
+  background: #26272b;
+}
+
+.center-panel {
+  background: var(--panel-deep);
+  border-color: #2b2c31;
+}
+
 .ai-panel {
-  background: var(--panel);
+  background: #1c1d21;
 }
 
 .panel-header,
@@ -377,9 +411,9 @@ input {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 35px;
-  padding: 0 12px;
-  background: var(--panel);
+  min-height: 38px;
+  padding: 0 14px;
+  background: rgba(22, 22, 24, 0.95);
   border-bottom: 1px solid var(--line);
 }
 
@@ -490,8 +524,8 @@ input {
   min-height: 35px;
   overflow-x: auto;
   overflow-y: hidden;
-  background: #252526;
-  border-bottom: 1px solid #1b1b1b;
+  background: #212125;
+  border-bottom: 1px solid #2b2c31;
 }
 
 .file-tab {
@@ -796,6 +830,24 @@ input {
 
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+@media (max-width: 1100px) {
+  .workspace-shell {
+    flex-direction: column;
+  }
+  .panel-workspace,
+  .center-panel,
+  .ai-panel,
+  .terminal-panel {
+    min-height: 0;
+  }
+  .ai-chat-container.q-chat {
+    grid-template-columns: 1fr;
+  }
+  .file-tabs {
+    min-height: 0;
+  }
 }
 
 ::-webkit-scrollbar-thumb {

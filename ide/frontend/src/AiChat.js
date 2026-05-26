@@ -20,20 +20,18 @@ const DEFAULT_SESSION = () => ({
 
 const buildSystemPrompt = (workspaceName, fileTree) =>
   `You are ANAI, a coding AI assistant inside a VS Code-like IDE.
+You are integrated with a local file-system agent and can read and write files in the current workspace.
 The owner and creator of this AI is anointedthedeveloper.
-Be concise, practical, and friendly.
+When editing or writing files, respond only with fenced tool blocks and no extra prose.
 Current workspace: ${workspaceName || "No folder selected"}.
 
-You can request file actions by including fenced tool blocks:
-\`\`\`anai-write path=relative/path.ext
-file contents here
-\`\`\`
-\`\`\`anai-read path=relative/path.ext
-\`\`\`
-\`\`\`anai-mkdir path=relative/folder
-\`\`\`
+Use exactly one of these formats:
+\`\`\`anai-read path=relative/path.ext\n\`\`\`
+\`\`\`anai-write path=relative/path.ext\nfile contents here\n\`\`\`
+If you need to create a folder, use:
+\`\`\`anai-mkdir path=relative/folder\n\`\`\`
 
-Only write files when the user asks. Use relative paths inside the workspace.
+Do not include explanation outside the code blocks.
 ${fileTree ? `\nWorkspace files:\n${fileTree}` : ""}`;
 
 const extractActions = (text) => {
@@ -132,6 +130,7 @@ function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpen
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [truncated, setTruncated] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const abortRef = useRef(null);
   const endRef = useRef(null);
   const inputRef = useRef(null);
@@ -172,27 +171,71 @@ function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpen
     const actions = extractActions(text);
     if (!actions.length) return;
     const { dirHandle, onWorkspaceRefresh, onOpenFile, onTerminalOutput } = propsRef.current;
-    if (!dirHandle) { push({ role: "assistant", content: "No folder open — cannot write files." }); return; }
+    const useBrowserFs = Boolean(dirHandle);
     const results = [];
+
+    const backendReadFile = async (relPath) => {
+      const res = await fetch("http://localhost:3001/api/read-file", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ relativePath: relPath }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not read file from backend.");
+      return data.content;
+    };
+
+    const backendWriteFile = async (relPath, content) => {
+      const res = await fetch("http://localhost:3001/api/write-file", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ relativePath: relPath, newContent: content }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not write file to backend.");
+      return data;
+    };
+
     for (const a of actions) {
       try {
         if (a.type === "write") {
-          await writeHandleFile(dirHandle, a.path, a.content);
+          if (useBrowserFs) {
+            await writeHandleFile(dirHandle, a.path, a.content);
+          } else {
+            await backendWriteFile(a.path, a.content);
+          }
           onWorkspaceRefresh?.();
           results.push(`✓ Wrote ${a.path}`);
           onTerminalOutput?.(`[ANAI] Wrote ${a.path}`);
-          try { onOpenFile?.(await resolveHandle(dirHandle, a.path, true), a.path); } catch {}
+          if (useBrowserFs) {
+            try { onOpenFile?.(await resolveHandle(dirHandle, a.path, true), a.path); } catch {}
+          }
         } else if (a.type === "read") {
-          const content = await readHandleFile(dirHandle, a.path);
+          const content = useBrowserFs
+            ? await readHandleFile(dirHandle, a.path)
+            : await backendReadFile(a.path);
           results.push(`Read ${a.path}:\n\`\`\`\n${content.slice(0, 4000)}\n\`\`\``);
         } else if (a.type === "mkdir") {
-          await resolveHandle(dirHandle, a.path, false);
+          if (useBrowserFs) {
+            await resolveHandle(dirHandle, a.path, false);
+          } else {
+            const res = await fetch("http://localhost:3001/api/write-file", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ relativePath: `${a.path}/.keep`, newContent: "" }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Could not create folder on backend.");
+          }
           onWorkspaceRefresh?.();
           results.push(`✓ Created folder ${a.path}`);
           onTerminalOutput?.(`[ANAI] Created folder ${a.path}`);
         }
-      } catch (e) { results.push(`✗ ${a.type} ${a.path}: ${e.message}`); }
+      } catch (e) {
+        results.push(`✗ ${a.type} ${a.path}: ${e.message}`);
+      }
     }
+
     push({ role: "assistant", content: results.join("\n") });
   }, [push]);
 
@@ -288,7 +331,7 @@ function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpen
       if (err.name !== "AbortError") {
         patchLast((m) => ({
           ...m,
-          content: `Error: ${err.message}. Make sure the DeepSeek API server is running on port 8080.`,
+          content: `Error: ${err.message}. Make sure the local backend bridge is running on port 3001 and the DeepSeek API is reachable on port 8080.`,
           pending: false,
           error: true,
         }));
@@ -313,18 +356,6 @@ function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpen
 
   return (
     <div className="ai-chat-container q-chat">
-      <aside className="chat-history">
-        <button className="history-action" onClick={newChat}><VscAdd /> New</button>
-        <div className="history-title"><VscHistory /> History</div>
-        <div className="history-list">
-          {sessions.map((s) => (
-            <button key={s.id} className={`history-item ${s.id === activeId ? "active" : ""}`} onClick={() => setActiveId(s.id)}>
-              {s.title}
-            </button>
-          ))}
-        </div>
-      </aside>
-
       <section className="chat-main">
         <div className="chat-header">
           <div className="chat-title-section">
@@ -334,10 +365,33 @@ function AiChat({ workspaceName, dirHandle, fileTree, onWorkspaceRefresh, onOpen
               <VscCircleFilled /> {workspaceName ? `Folder: ${workspaceName}` : "No folder open"}
             </div>
           </div>
-          <button className="clear-btn" onClick={() => { updateActive((s) => ({ ...s, messages: DEFAULT_SESSION().messages })); setTruncated(false); }} title="Clear chat">
-            <VscClearAll />
-          </button>
+
+          <div className="chat-actions">
+            <button type="button" className={`history-toggle ${showHistory ? "active" : ""}`} onClick={() => setShowHistory((v) => !v)}>
+              <VscHistory /> History
+            </button>
+            <button className="clear-btn" onClick={() => { updateActive((s) => ({ ...s, messages: DEFAULT_SESSION().messages })); setTruncated(false); }} title="Clear chat">
+              <VscClearAll />
+            </button>
+          </div>
         </div>
+
+        {showHistory && (
+          <div className="chat-history-panel">
+            <div className="history-panel-header">
+              <span>Recent conversations</span>
+              <button type="button" className="clear-btn" onClick={() => setShowHistory(false)} title="Hide history">×</button>
+            </div>
+            <div className="history-list">
+              {sessions.map((s) => (
+                <button key={s.id} className={`history-item ${s.id === activeId ? "active" : ""}`} onClick={() => setActiveId(s.id)}>
+                  {s.title}
+                </button>
+              ))}
+            </div>
+            <button className="history-action history-action-bottom" onClick={newChat}><VscAdd /> New chat</button>
+          </div>
+        )}
 
         <div className="messages-container">
           {messages.map((msg, i) => (

@@ -3,7 +3,7 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import {
   VscChromeClose, VscFile, VscFolderOpened, VscNewFolder, VscNewFile,
   VscSave, VscSync, VscTerminal, VscFileCode, VscJson, VscGear,
-  VscColorMode,
+  VscColorMode, VscHistory,
 } from "react-icons/vsc";
 import AiChat from "./AiChat";
 import "./App.css";
@@ -201,7 +201,7 @@ function App() {
     setTerminalInput("");
     if (cmd.trim() === "clear") { setTerminalOutput([]); return; }
     try {
-      const res = await fetch("http://localhost:8080/api/terminal", {
+      const res = await fetch("http://localhost:3001/api/terminal", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ command: cmd, cwd: terminalCwd }),
@@ -217,8 +217,9 @@ function App() {
           return target.startsWith("/") || /^[A-Za-z]:/.test(target) ? target : `${prev}/${target}`;
         });
       }
-    } catch {
-      setTerminalOutput((prev) => [...prev, "⚠ Could not reach backend on port 8080."]);
+    } catch (err) {
+      console.error(err);
+      setTerminalOutput((prev) => [...prev, "⚠ Could not reach backend on port 3001."]);
     }
   }, [terminalCwd]);
 
@@ -265,9 +266,6 @@ function App() {
           <button onClick={openFolder}><VscNewFolder className="header-icon" /> Open Folder</button>
           <button onClick={() => refreshTree()} disabled={!dirHandle}><VscSync className="header-icon" /> Refresh</button>
           <button onClick={() => setTerminalOutput([])}><VscTerminal className="header-icon" /> Clear Terminal</button>
-          <button onClick={() => setShowExplorer((v) => !v)} title="Ctrl+B">Explorer</button>
-          <button onClick={() => setShowTerminal((v) => !v)} title="Ctrl+`">Terminal</button>
-          <button onClick={() => setShowChat((v) => !v)} title="Ctrl+Shift+A">Chat</button>
           <button onClick={() => setTheme((t) => t === "dark" ? "light" : "dark")} title="Toggle theme">
             <VscColorMode className="header-icon" /> {theme === "dark" ? "Light" : "Dark"}
           </button>
@@ -275,6 +273,20 @@ function App() {
       </header>
 
       <div className="workspace-shell">
+        <aside className="activity-bar">
+          <button className={`activity-item ${showExplorer ? "active" : ""}`} title="Explorer" onClick={() => setShowExplorer((v) => !v)}>
+            <VscFolderOpened />
+          </button>
+          <button className={`activity-item ${showTerminal ? "active" : ""}`} title="Terminal" onClick={() => setShowTerminal((v) => !v)}>
+            <VscTerminal />
+          </button>
+          <button className={`activity-item ${showChat ? "active" : ""}`} title="Chat" onClick={() => setShowChat((v) => !v)}>
+            <VscHistory />
+          </button>
+          <button className="activity-item" title="Toggle theme" onClick={() => setTheme((t) => t === "dark" ? "light" : "dark")}> 
+            <VscColorMode />
+          </button>
+        </aside>
         <PanelGroup direction="horizontal" className="panel-workspace">
           {showExplorer && (
             <>
@@ -303,15 +315,17 @@ function App() {
           <Panel minSize={36} defaultSize={showChat ? 52 : 82} className="center-panel">
             <PanelGroup direction="vertical">
               <Panel defaultSize={68} minSize={35} className="center-panel">
-                <div className="editor-toolbar">
-                  <div className="editor-path">{activeFile || "No file open"}</div>
-                  <div className="editor-actions">
-                    <button className="save-button" onClick={() => editorRef.current?.undo()} disabled={!activeFile}>Undo</button>
-                    <button className="save-button" onClick={() => editorRef.current?.redo()} disabled={!activeFile}>Redo</button>
-                    <button className="save-button" onClick={saveFile} disabled={!activeFile} title="Ctrl+S"><VscSave /> Save</button>
-                    <button className="save-button" onClick={() => editorRef.current?.formatDocument?.()} disabled={!activeFile}>⚡ Format</button>
+                {activeFile && (
+                  <div className="editor-toolbar">
+                    <div className="editor-path">{activeFile}</div>
+                    <div className="editor-actions">
+                      <button className="save-button" onClick={() => editorRef.current?.undo()} disabled={!activeFile}>Undo</button>
+                      <button className="save-button" onClick={() => editorRef.current?.redo()} disabled={!activeFile}>Redo</button>
+                      <button className="save-button" onClick={saveFile} disabled={!activeFile} title="Ctrl+S"><VscSave /> Save</button>
+                      <button className="save-button" onClick={() => editorRef.current?.formatDocument?.()} disabled={!activeFile}>⚡ Format</button>
+                    </div>
                   </div>
-                </div>
+                )}
                 <div className="file-tabs">
                   {openFiles.map((f, i) => (
                     <div key={`${f.path}-${i}`} className={`file-tab ${activeFile === f.path ? "active" : ""}`} onClick={() => openFileByPath(f.path)}>
@@ -382,10 +396,10 @@ function App() {
           <span>{dirHandle ? `Folder: ${dirHandle.name}` : "No folder open"}</span>
         </div>
         <div className="status-right">
-          <span>Ctrl+B Explorer</span>
-          <span>Ctrl+` Terminal</span>
-          <span>Ctrl+Shift+A Chat</span>
-          <span>API: localhost:8080</span>
+          <span><kbd>Ctrl+B</kbd> Explorer</span>
+          <span><kbd>Ctrl+`</kbd> Terminal</span>
+          <span><kbd>Ctrl+Shift+A</kbd> Chat</span>
+          <span>API: localhost:3001</span>
         </div>
       </footer>
 
